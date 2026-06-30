@@ -54,6 +54,19 @@ function calcFechaEntrega(fecha) {
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 function normalizar(s) { return (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim(); }
 
+// Incremento atómico del contador de pedidos: Firebase resuelve esto en el servidor
+// usando el valor especial {".sv": {"increment": N}}, así nunca se repite un número
+// aunque la app (a mano) y esta función (Shopify) pidan "el próximo número" a la vez.
+async function siguienteNumeroAtomico() {
+  const resp = await fetch(`${FIREBASE_DB}/contadores/pedidoNumero.json`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ '.sv': { increment: 1 } })
+  });
+  const nuevoValor = await resp.json();
+  return typeof nuevoValor === 'number' ? nuevoValor : null;
+}
+
 exports.handler = async (event) => {
   try {
     const hmac = event.headers['x-shopify-hmac-sha256'] || event.headers['X-Shopify-Hmac-Sha256'];
@@ -132,10 +145,18 @@ exports.handler = async (event) => {
       await putJSON(`${FIREBASE_DB}/productos/${pid}.json`, productosAfectados[pid]);
     }
 
-    // Número de pedido correlativo (igual que cuando lo cargás a mano)
+    // Número de pedido: contador atómico (evita choques con pedidos cargados a mano al mismo tiempo).
+    // Resguardo extra: si por algún motivo el contador todavía no está al día con el máximo
+    // ya existente (ej. primera vez que se activa esto), nos aseguramos de no repetir ningún número.
     const pedidosRaw = await fetchJSON(`${FIREBASE_DB}/pedidos.json`);
     const pedidos = pedidosRaw ? Object.values(pedidosRaw) : [];
-    const numero = pedidos.reduce((m, p) => Math.max(m, p.numero || 0), 999) + 1;
+    const maxLocal = pedidos.reduce((m, p) => Math.max(m, p.numero || 0), 999);
+    let numero = await siguienteNumeroAtomico();
+    if (numero === null || numero <= maxLocal) {
+      numero = maxLocal + 1;
+      // Ponemos el contador al día para que las próximas veces ya arranquen bien desde acá.
+      await putJSON(`${FIREBASE_DB}/contadores/pedidoNumero.json`, numero);
+    }
 
     const cliente = order.customer
       ? `${order.customer.first_name || ''} ${order.customer.last_name || ''}`.trim()
@@ -167,4 +188,3 @@ exports.handler = async (event) => {
     return { statusCode: 500, body: 'Error: ' + err.message };
   }
 };
-      
