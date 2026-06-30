@@ -43,10 +43,13 @@ function putJSON(url, body) {
 
 function today() { return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Asuncion' }); }
 function addDays(d, n) { const x = new Date(d + 'T00:00:00'); x.setDate(x.getDate() + n); return x.toISOString().slice(0, 10); }
+function esDomingo(d) { return new Date(d + 'T00:00:00').getDay() === 0; }
 function calcFechaEntrega(fecha) {
   const horaPY = new Date().toLocaleString('en-US', { timeZone: 'America/Asuncion', hour: '2-digit', hour12: false });
   const hora = parseInt(horaPY, 10);
-  return hora < 13 ? fecha : addDays(fecha, 1);
+  let fe = hora < 13 ? fecha : addDays(fecha, 1);
+  if (esDomingo(fe)) fe = addDays(fe, 1); // el delivery no trabaja domingo, pasa directo al lunes
+  return fe;
 }
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 function normalizar(s) { return (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim(); }
@@ -59,23 +62,47 @@ exports.handler = async (event) => {
     }
     const order = JSON.parse(event.body);
 
-    // Traer catálogo actual para matchear productos por nombre
+    // Traer catálogo actual para matchear: cada SKU ahora vive en la VARIANTE (color),
+    // no en el producto general. Armamos un mapa código → {producto, variante} para
+    // poder encontrar exacto a qué color corresponde cada línea del pedido de Shopify.
     const productosRaw = await fetchJSON(`${FIREBASE_DB}/productos.json`);
     const productos = productosRaw ? Object.values(productosRaw) : [];
+    const porCodigoVariante = {};
+    const porCodigoProducto = {};
+    productos.forEach(p => {
+      if (p.codigo) porCodigoProducto[normalizar(p.codigo)] = p;
+      (p.variantes || []).forEach(v => {
+        if (v.codigo) porCodigoVariante[normalizar(v.codigo)] = { producto: p, variante: v };
+      });
+    });
 
     const arts = (order.line_items || []).map(li => {
-      const tituloNorm = normalizar(li.title || '');
-      const match = productos
-        .filter(p => p.nombre)
-        .sort((a, b) => normalizar(b.nombre).length - normalizar(a.nombre).length)
-        .find(p => tituloNorm.includes(normalizar(p.nombre)));
-      const varianteTxt = normalizar(li.variant_title || '');
-      let vid = '', vnom = li.variant_title || '';
-      if (match && match.variantes && match.variantes.length) {
-        const vMatch = match.variantes.find(v => v.color && varianteTxt.includes(normalizar(v.color)));
-        const v = vMatch || match.variantes[0];
-        vid = v.id; vnom = v.color || vnom;
+      const skuNorm = normalizar(li.sku || '');
+      let match = null, vid = '', vnom = li.variant_title || '';
+
+      if (skuNorm && porCodigoVariante[skuNorm]) {
+        // Coincidencia exacta por SKU de variante (lo más confiable)
+        match = porCodigoVariante[skuNorm].producto;
+        vid = porCodigoVariante[skuNorm].variante.id;
+        vnom = porCodigoVariante[skuNorm].variante.color || vnom;
+      } else if (skuNorm && porCodigoProducto[skuNorm]) {
+        // SKU a nivel producto (productos sin variantes de color)
+        match = porCodigoProducto[skuNorm];
+      } else {
+        // Respaldo: buscar por nombre si no hubo coincidencia exacta de SKU
+        const tituloNorm = normalizar(li.title || '');
+        match = productos
+          .filter(p => p.nombre)
+          .sort((a, b) => normalizar(b.nombre).length - normalizar(a.nombre).length)
+          .find(p => tituloNorm.includes(normalizar(p.nombre)));
+        if (match && match.variantes && match.variantes.length) {
+          const varianteTxt = normalizar(li.variant_title || '');
+          const vMatch = match.variantes.find(v => v.color && varianteTxt.includes(normalizar(v.color)));
+          const v = vMatch || match.variantes[0];
+          vid = v.id; vnom = v.color || vnom;
+        }
       }
+
       return {
         pid: match ? match.id : '',
         nombre: match ? match.nombre : (li.title || 'Producto Shopify'),
@@ -89,6 +116,21 @@ exports.handler = async (event) => {
     const resumen = arts.map(a => `${a.nombre}${a.vnom ? ' (' + a.vnom + ')' : ''} x${a.cant}`).join(', ');
     const fecha = today();
     const fechaEntrega = calcFechaEntrega(fecha);
+
+    // Descontar stock de cada producto/variante encontrado (igual que hace la app al cargar un pedido a mano)
+    const productosAfectados = {};
+    arts.forEach(a => {
+      if (!a.pid || !a.vid) return;
+      const p = productos.find(x => x.id === a.pid);
+      if (!p || !p.variantes) return;
+      const v = p.variantes.find(vv => vv.id === a.vid);
+      if (!v) return;
+      v.stock = (v.stock || 0) - a.cant;
+      productosAfectados[p.id] = p;
+    });
+    for (const pid in productosAfectados) {
+      await putJSON(`${FIREBASE_DB}/productos/${pid}.json`, productosAfectados[pid]);
+    }
 
     // Número de pedido correlativo (igual que cuando lo cargás a mano)
     const pedidosRaw = await fetchJSON(`${FIREBASE_DB}/pedidos.json`);
