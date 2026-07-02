@@ -91,6 +91,9 @@ exports.handler = async (event) => {
 
     const arts = (order.line_items || []).map(li => {
       const skuNorm = normalizar(li.sku || '');
+      console.log(`SKU Shopify: "${li.sku}" → normalizado: "${skuNorm}" | título: "${li.title}"`);
+      console.log('SKUs en catálogo por variante:', Object.keys(porCodigoVariante));
+      console.log('SKUs en catálogo por producto:', Object.keys(porCodigoProducto));
       let match = null, vid = '', vnom = li.variant_title || '';
 
       if (skuNorm && porCodigoVariante[skuNorm]) {
@@ -122,7 +125,10 @@ exports.handler = async (event) => {
         img: match ? (match.img || '') : '',
         vid, vnom,
         cant: li.quantity || 1,
-        precio: match ? match.precio : parseFloat(li.price || 0)
+        precio: match ? match.precio : parseFloat(li.price || 0),
+        // Si no hay match en el catálogo, el costo es desconocido — se marca para revisión manual
+        costo: match ? (match.costo || 0) : null,
+        sinMatch: !match
       };
     });
 
