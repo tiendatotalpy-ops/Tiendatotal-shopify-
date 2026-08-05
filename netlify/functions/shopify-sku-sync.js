@@ -8,7 +8,7 @@ const https = require('https');
 const SHOP = '2seg9c-gn.myshopify.com';
 const CLIENT_ID = process.env.SHOPIFY_CLIENT_ID;
 const CLIENT_SECRET = process.env.SHOPIFY_CLIENT_SECRET;
-const API_VERSION = '2024-10';
+const API_VERSION = '2026-07';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
