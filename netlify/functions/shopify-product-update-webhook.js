@@ -46,17 +46,27 @@ function putJSON(url, body) {
   });
 }
 
+
+// Guarda el diagnóstico de cada ejecución en Firebase para poder revisarlo fácil
+function guardarDiag(diag) {
+  diag.hora = new Date().toISOString();
+  return putJSON(`${FIREBASE_DB}/debugWebhook.json`, diag).catch(() => {});
+}
+
 exports.handler = async (event) => {
   try {
     const hmac = event.headers['x-shopify-hmac-sha256'] || event.headers['X-Shopify-Hmac-Sha256'];
     if (!verificarFirma(event.body, hmac)) {
+      console.log('RESULTADO: FIRMA INVALIDA — el secreto de Netlify no coincide');
+      await guardarDiag({ resultado: 'FIRMA INVALIDA — el secreto en Netlify no coincide con el de Shopify' });
       return { statusCode: 401, body: 'Firma inválida' };
     }
     const prod = JSON.parse(event.body);
+    console.log('WEBHOOK UPDATE recibido:', prod.id, '|', prod.title, '| SKUs:', (prod.variants||[]).map(v=>v.sku).join(','));
 
     // Buscar en Firebase el producto que tenga este shopifyProductId
     const todos = await getJSON(`${FIREBASE_DB}/productos.json`);
-    if (!todos) return { statusCode: 200, body: 'Sin productos en la app todavía' };
+    if (!todos) { console.log('RESULTADO: Firebase sin productos'); return { statusCode: 200, body: 'Sin productos en la app todavía' }; }
 
     let idFirebase = null;
     for (const [key, val] of Object.entries(todos)) {
@@ -87,6 +97,13 @@ exports.handler = async (event) => {
         }
       }
     }
+    console.log('RESULTADO MATCH:', idFirebase ? ('encontrado id='+idFirebase+(esVinculoNuevo?' (vinculo NUEVO)':' (ya vinculado)')) : 'NO ENCONTRADO — se ignora');
+    await guardarDiag({
+      resultado: idFirebase ? ('EMPAREJADO con id '+idFirebase+(esVinculoNuevo?' (vínculo nuevo)':' (ya estaba vinculado)')) : 'NO EMPAREJADO — ningún producto de la app coincide ni por ID, ni por SKU, ni por nombre',
+      producto_shopify: prod.title,
+      skus_shopify: (prod.variants||[]).map(v=>v.sku),
+      nombres_en_app: Object.values(todos).filter(Boolean).map(p=>p.nombre)
+    });
     // Si este producto no vino de Shopify y no se pudo emparejar por SKU, se ignora
     if (!idFirebase) return { statusCode: 200, body: 'Producto sin vínculo en la app, se ignora' };
 
@@ -123,6 +140,8 @@ exports.handler = async (event) => {
     if (esVinculoNuevo) cambios.shopifyProductId = prod.id; // guardar el vínculo para la próxima vez
 
     await putJSON(`${FIREBASE_DB}/productos/${idFirebase}.json`, { ...actual, ...cambios });
+    console.log('GUARDADO OK en Firebase:', idFirebase, '| codigo nuevo:', cambios.codigo || '(variantes)');
+    await guardarDiag({ resultado: 'GUARDADO OK', producto: prod.title, codigo_nuevo: cambios.codigo || 'variantes actualizadas' });
 
     return { statusCode: 200, body: 'OK' };
   } catch (err) {
