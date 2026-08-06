@@ -75,6 +75,18 @@ exports.handler = async (event) => {
         }
       }
     }
+    // Respaldo: emparejar por NOMBRE exacto (ignorando mayúsculas y espacios extra),
+    // para cuando los SKU ya no coinciden porque se cambiaron primero en Shopify.
+    if (!idFirebase) {
+      const norm = s => (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+      const nombreShopify = norm(prod.title);
+      if (nombreShopify) {
+        for (const [key, val] of Object.entries(todos)) {
+          if (!val || val.shopifyProductId) continue;
+          if (norm(val.nombre) === nombreShopify) { idFirebase = key; esVinculoNuevo = true; break; }
+        }
+      }
+    }
     // Si este producto no vino de Shopify y no se pudo emparejar por SKU, se ignora
     if (!idFirebase) return { statusCode: 200, body: 'Producto sin vínculo en la app, se ignora' };
 
