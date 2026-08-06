@@ -53,6 +53,8 @@ function guardarDiag(diag) {
   return putJSON(`${FIREBASE_DB}/debugWebhook.json`, diag).catch(() => {});
 }
 
+function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
 exports.handler = async (event) => {
   try {
     const hmac = event.headers['x-shopify-hmac-sha256'] || event.headers['X-Shopify-Hmac-Sha256'];
@@ -104,8 +106,28 @@ exports.handler = async (event) => {
       skus_shopify: (prod.variants||[]).map(v=>v.sku),
       nombres_en_app: Object.values(todos).filter(Boolean).map(p=>p.nombre)
     });
-    // Si este producto no vino de Shopify y no se pudo emparejar por SKU, se ignora
-    if (!idFirebase) return { statusCode: 200, body: 'Producto sin vínculo en la app, se ignora' };
+    // Si no se encontró en la app, se CREA directamente (copia fiel de Shopify)
+    if (!idFirebase) {
+      const imgN = (prod.image && prod.image.src) || (prod.images && prod.images[0] && prod.images[0].src) || '';
+      const vShop = prod.variants || [];
+      const tieneVars = vShop.length > 1 || (vShop.length === 1 && vShop[0].title && vShop[0].title !== 'Default Title');
+      const nuevoProd = {
+        nombre: prod.title || 'Producto sin nombre',
+        codigo: (!tieneVars && vShop[0]) ? (vShop[0].sku || '') : '',
+        proveedor: '',
+        precio: parseFloat((vShop[0] && vShop[0].price) || 0),
+        costo: 0, margen: 0, img: imgN,
+        variantes: tieneVars ? vShop.map(v => ({ id: uid(), color: v.title || '', hex: '#7ed957', stock: v.inventory_quantity || 0, codigo: v.sku || '' })) : [],
+        stock: tieneVars ? 0 : (vShop[0] ? (vShop[0].inventory_quantity || 0) : 0),
+        origen: 'shopify',
+        shopifyProductId: prod.id
+      };
+      const nid = uid();
+      nuevoProd.id = nid;
+      await putJSON(`${FIREBASE_DB}/productos/${nid}.json`, nuevoProd);
+      await guardarDiag({ resultado: 'CREADO NUEVO en la app (no existía)', producto: prod.title, codigo: nuevoProd.codigo || 'variantes' });
+      return { statusCode: 200, body: 'Creado' };
+    }
 
     const actual = todos[idFirebase];
     const variantsShopify = prod.variants || [];
