@@ -82,7 +82,7 @@ exports.handler = async (event) => {
     // Buscar el producto y su variante por el SKU viejo
     const prodResp = await req('GET', `/admin/api/${API_VERSION}/products/${shopifyProductId}.json`, token);
     if (prodResp.status !== 200 || !prodResp.json.product) {
-      return { statusCode: 404, headers: CORS, body: JSON.stringify({ ok: false, error: 'Producto no encontrado en Shopify' }) };
+      return { statusCode: 404, headers: CORS, body: JSON.stringify({ ok: false, error: 'Producto no encontrado en Shopify', statusShopify: prodResp.status, detalleShopify: prodResp.json, shopifyProductId }) };
     }
     const variants = prodResp.json.product.variants || [];
     let variant = variants.find(v => (v.sku || '') === (skuViejo || ''));
