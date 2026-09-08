@@ -2,13 +2,29 @@
 // Recibe un pedido confirmado desde la app y lo manda a Meta como evento Purchase (server-side).
 const crypto = require('crypto');
 
+function normalizarTelefonoPY(telefono) {
+  let n = String(telefono || '').replace(/\D/g, ''); // deja solo dígitos
+  if (!n) return '';
+  if (n.startsWith('595')) {
+    // ya viene con código de país
+  } else if (n.startsWith('0')) {
+    n = '595' + n.slice(1); // saca el 0 inicial y le pone 595
+  } else {
+    n = '595' + n; // asume que faltaba el código de país
+  }
+  return n;
+}
+
 exports.handler = async function (event) {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: 'Method not allowed' };
   }
 
   try {
-    const { telefono, monto, numero } = JSON.parse(event.body || '{}');
+    // fbc y fbp son opcionales por ahora: se agregan cuando el webhook de Shopify
+    // empiece a guardarlos en el pedido. Si no vienen, el evento igual se manda
+    // (con menor calidad de match) en vez de fallar.
+    const { telefono, monto, numero, fbc, fbp, clientIp, userAgent } = JSON.parse(event.body || '{}');
 
     const PIXEL_ID = process.env.META_PIXEL_ID;
     const TOKEN = process.env.META_CAPI_TOKEN;
@@ -17,19 +33,26 @@ exports.handler = async function (event) {
       return { statusCode: 500, body: JSON.stringify({ error: 'Falta configurar META_PIXEL_ID o META_CAPI_TOKEN en Netlify' }) };
     }
 
-    // Meta pide el teléfono en formato E.164 (solo dígitos, con código de país) y hasheado en SHA-256.
-    const telefonoLimpio = String(telefono || '').replace(/\D/g, '');
+    const telefonoNormalizado = normalizarTelefonoPY(telefono);
     const userData = {};
-    if (telefonoLimpio) {
-      userData.ph = [crypto.createHash('sha256').update(telefonoLimpio).digest('hex')];
+    if (telefonoNormalizado) {
+      userData.ph = [crypto.createHash('sha256').update(telefonoNormalizado).digest('hex')];
     }
+    if (fbc) userData.fbc = fbc;
+    if (fbp) userData.fbp = fbp;
+    if (clientIp) userData.client_ip_address = clientIp;
+    if (userAgent) userData.client_user_agent = userAgent;
 
     const payload = {
       data: [
         {
           event_name: 'Purchase',
           event_time: Math.floor(Date.now() / 1000),
-          action_source: 'system_generated',
+          // 'other' en vez de 'system_generated': esto es una compra confirmada
+          // manualmente sin sesión de navegador activa en este momento, no un
+          // evento automático del sistema. Cuando fbc/fbp estén disponibles,
+          // idealmente pasar a 'website'.
+          action_source: 'other',
           user_data: userData,
           custom_data: {
             currency: 'PYG',
@@ -49,6 +72,7 @@ exports.handler = async function (event) {
       }
     );
     const data = await resp.json();
+    console.log('Respuesta de Meta:', resp.status, JSON.stringify(data));
 
     return {
       statusCode: resp.ok ? 200 : 500,
