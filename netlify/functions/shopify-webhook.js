@@ -1,3 +1,4 @@
+
 // netlify/functions/shopify-webhook.js
 // Recibe el aviso automático de Shopify cuando entra un pedido nuevo,
 // lo interpreta y lo guarda en Firebase con el mismo formato que usa la app.
@@ -53,6 +54,30 @@ function calcFechaEntrega(fecha) {
 }
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 function normalizar(s) { return (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim(); }
+
+// Extrae fbclid, ya sea de un note_attribute directo llamado "fbclid",
+// o de la query string guardada en el atributo "full_url" (así lo guarda EasySell).
+function extraerFbclid(noteAttrs) {
+  if (!noteAttrs) return '';
+  const directo = noteAttrs.find(a => (a.name || '').toLowerCase() === 'fbclid');
+  if (directo && directo.value) return directo.value;
+  const fullUrlAttr = noteAttrs.find(a => (a.name || '').toLowerCase() === 'full_url');
+  if (fullUrlAttr && fullUrlAttr.value) {
+    try {
+      const url = new URL(fullUrlAttr.value);
+      const fbclid = url.searchParams.get('fbclid');
+      if (fbclid) return fbclid;
+    } catch (e) { /* URL inválida, seguimos sin fbclid */ }
+  }
+  return '';
+}
+
+// Meta acepta el fbc reconstruido a partir del fbclid crudo con este formato:
+// fb.1.<timestamp_ms>.<fbclid>  (ver docs de Conversions API "fbc parameter")
+function construirFbc(fbclid, timestampMs) {
+  if (!fbclid) return '';
+  return `fb.1.${timestampMs}.${fbclid}`;
+}
 
 // Incremento atómico del contador de pedidos: Firebase resuelve esto en el servidor
 // usando el valor especial {".sv": {"increment": N}}, así nunca se repite un número
@@ -174,12 +199,28 @@ exports.handler = async (event) => {
       : '';
     const montoFinal = parseFloat(order.total_price || 0);
 
+    // --- Datos de tracking para Meta CAPI (fbc/fbp/IP/user-agent) ---
+    // El pedido de Shopify trae esto en note_attributes (guardado por EasySell) y en
+    // client_details (nativo de Shopify). Se guarda en el pedido para que meta-purchase.js
+    // los tenga disponibles al momento de confirmar la venta.
+    const fbclid = extraerFbclid(order.note_attributes);
+    const orderTimestampMs = order.created_at ? new Date(order.created_at).getTime() : Date.now();
+    const fbc = construirFbc(fbclid, orderTimestampMs);
+    const fbpAttr = (order.note_attributes || []).find(a => (a.name || '').toLowerCase() === 'fbp' || (a.name || '').toLowerCase() === '_fbp');
+    const fbp = fbpAttr ? fbpAttr.value : '';
+    const clientIp = order.client_details?.browser_ip || '';
+    const clientUserAgent = order.client_details?.user_agent || '';
+
     const id = uid();
     const pedido = {
       id, fecha, fechaEntrega, numero, cliente, telefono, ciudad, nota,
       arts, resumen, montoFinal, estado: 'tomado',
       origen: 'shopify', shopifyOrderId: order.id
     };
+    if (fbc) pedido.fbc = fbc;
+    if (fbp) pedido.fbp = fbp;
+    if (clientIp) pedido.clientIp = clientIp;
+    if (clientUserAgent) pedido.clientUserAgent = clientUserAgent;
 
     await putJSON(`${FIREBASE_DB}/pedidos/${id}.json`, pedido);
     // Aviso para que la app muestre la notificación
