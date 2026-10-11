@@ -194,6 +194,17 @@ exports.handler = async (event) => {
       : '';
     const montoFinal = parseFloat(order.total_price || 0);
 
+    // Horario/turno elegido en el formulario de EasySell (viene en note_attributes y/o en la nota del pedido)
+    const attrHorario = (order.note_attributes || []).find(a => /horario|cu[aá]ndo|recib|turno/i.test(a.name || ''))
+      || (order.note_attributes || []).find(a => /ma[ñn]ana|tarde/i.test(a.value || ''));
+    const horario = ((attrHorario && attrHorario.value) || order.note || '').toString().trim();
+    const hNorm = normalizar(horario);
+    let turno = '';
+    if (/manana/.test(hNorm)) turno = 'manana';
+    else if (/tarde/.test(hNorm)) turno = 'tarde';
+    else if (/^\D*(8|9|10|11)\b/.test(hNorm)) turno = 'manana';
+    else if (/^\D*(12|13|14|15|16|17)\b/.test(hNorm)) turno = 'tarde';
+
     // --- Datos de tracking para Meta CAPI (fbc/fbp/IP/user-agent) ---
     // El pedido de Shopify trae esto en note_attributes (guardado por EasySell) y en
     // client_details (nativo de Shopify). Se guarda en el pedido para que meta-purchase.js
@@ -214,6 +225,11 @@ exports.handler = async (event) => {
       stockDescontado: false,
       creadoEn: new Date().toISOString()
     };
+    if (horario) {
+      pedido.horario = horario;
+      pedido.nota = (nota ? nota + ' · ' : '') + '🕐 ' + horario;
+    }
+    if (turno) pedido.turno = turno;
     if (fbc) pedido.fbc = fbc;
     if (fbp) pedido.fbp = fbp;
     if (clientIp) pedido.clientIp = clientIp;
