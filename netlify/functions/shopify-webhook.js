@@ -127,8 +127,15 @@ exports.handler = async (event) => {
         vid = porCodigoVariante[skuNorm].variante.id;
         vnom = porCodigoVariante[skuNorm].variante.color || vnom;
       } else if (skuNorm && porCodigoProducto[skuNorm]) {
-        // SKU a nivel producto (productos sin variantes de color)
+        // SKU a nivel producto. Si igual tiene colores cargados, elegir la variante
+        // (por nombre de color de Shopify, o la única que haya) para que el stock se pueda mover.
         match = porCodigoProducto[skuNorm];
+        if (match.variantes && match.variantes.length) {
+          const varianteTxt = normalizar(li.variant_title || '');
+          const vMatch = match.variantes.find(v => v.color && varianteTxt && varianteTxt.includes(normalizar(v.color)));
+          const v = vMatch || (match.variantes.length === 1 ? match.variantes[0] : null);
+          if (v) { vid = v.id; vnom = v.color || vnom; }
+        }
       } else {
         // Respaldo: buscar por nombre si no hubo coincidencia exacta de SKU
         const tituloNorm = normalizar(li.title || '');
@@ -161,20 +168,8 @@ exports.handler = async (event) => {
     const fecha = today();
     const fechaEntrega = calcFechaEntrega(fecha);
 
-    // Descontar stock de cada producto/variante encontrado (igual que hace la app al cargar un pedido a mano)
-    const productosAfectados = {};
-    arts.forEach(a => {
-      if (!a.pid || !a.vid) return;
-      const p = productos.find(x => x.id === a.pid);
-      if (!p || !p.variantes) return;
-      const v = p.variantes.find(vv => vv.id === a.vid);
-      if (!v) return;
-      v.stock = (v.stock || 0) - a.cant;
-      productosAfectados[p.id] = p;
-    });
-    for (const pid in productosAfectados) {
-      await putJSON(`${FIREBASE_DB}/productos/${pid}.json`, productosAfectados[pid]);
-    }
+    // El stock YA NO se descuenta al entrar el pedido: se descuenta en la app cuando
+    // el pedido se CONFIRMA, y vuelve si se cancela (pedido.stockDescontado = false).
 
     // Número de pedido: contador atómico (evita choques con pedidos cargados a mano al mismo tiempo).
     // Resguardo extra: si por algún motivo el contador todavía no está al día con el máximo
@@ -215,7 +210,9 @@ exports.handler = async (event) => {
     const pedido = {
       id, fecha, fechaEntrega, numero, cliente, telefono, ciudad, nota,
       arts, resumen, montoFinal, estado: 'tomado',
-      origen: 'shopify', shopifyOrderId: order.id
+      origen: 'shopify', shopifyOrderId: order.id,
+      stockDescontado: false,
+      creadoEn: new Date().toISOString()
     };
     if (fbc) pedido.fbc = fbc;
     if (fbp) pedido.fbp = fbp;

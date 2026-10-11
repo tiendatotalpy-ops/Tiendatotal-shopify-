@@ -46,6 +46,23 @@ function putJSON(url, body) {
   });
 }
 
+// PATCH = actualiza solo los campos enviados (no borra ni pisa el resto, ej. el stock)
+function patchJSON(url, body) {
+  return new Promise((resolve, reject) => {
+    const data = JSON.stringify(body);
+    const req = https.request(url, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) }
+    }, res => {
+      let resp = '';
+      res.on('data', c => resp += c);
+      res.on('end', () => resolve(resp));
+    });
+    req.on('error', reject);
+    req.write(data);
+    req.end();
+  });
+}
 
 // Guarda el diagnóstico de cada ejecución en Firebase para poder revisarlo fácil
 function guardarDiag(diag) {
@@ -141,18 +158,23 @@ exports.handler = async (event) => {
       precio: parseFloat((variantsShopify[0] && variantsShopify[0].price) || actual.precio || 0)
     };
 
+    // IMPORTANTE: este aviso de Shopify llega también cada vez que se vende algo (cambia el
+    // inventario). Antes se reescribía el producto entero y eso PISABA el stock de la app.
+    // Ahora solo se actualizan nombre/foto/precio/SKU/color con PATCH, sin tocar nunca "stock".
+    const variantesNuevas = [];
     if (tieneVariantesReales) {
-      // Actualiza el SKU/color de cada variante que ya existía (por posición), agrega las nuevas
       const variantesActuales = actual.variantes || [];
-      cambios.variantes = variantsShopify.map((v, i) => {
+      variantsShopify.forEach((v, i) => {
         const existente = variantesActuales[i];
-        return {
-          id: existente ? existente.id : (Date.now().toString(36) + Math.random().toString(36).slice(2, 6)),
-          color: v.title || (existente ? existente.color : ''),
-          hex: existente ? existente.hex : '#7ed957',
-          stock: existente ? existente.stock : (v.inventory_quantity || 0),
-          codigo: v.sku || ''
-        };
+        if (existente) {
+          cambios[`variantes/${i}/color`] = v.title || existente.color || '';
+          cambios[`variantes/${i}/codigo`] = v.sku || '';
+        } else {
+          variantesNuevas.push({ i, data: {
+            id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+            color: v.title || '', hex: '#7ed957', stock: v.inventory_quantity || 0, codigo: v.sku || ''
+          }});
+        }
       });
     } else {
       cambios.codigo = (variantsShopify[0] && variantsShopify[0].sku) || actual.codigo || '';
@@ -161,7 +183,10 @@ exports.handler = async (event) => {
     cambios.margen = cambios.precio > 0 ? Math.round((cambios.precio - (actual.costo || 0)) / cambios.precio * 100) : 0;
     if (esVinculoNuevo) cambios.shopifyProductId = prod.id; // guardar el vínculo para la próxima vez
 
-    await putJSON(`${FIREBASE_DB}/productos/${idFirebase}.json`, { ...actual, ...cambios });
+    await patchJSON(`${FIREBASE_DB}/productos/${idFirebase}.json`, cambios);
+    for (const nv of variantesNuevas) {
+      await putJSON(`${FIREBASE_DB}/productos/${idFirebase}/variantes/${nv.i}.json`, nv.data);
+    }
     console.log('GUARDADO OK en Firebase:', idFirebase, '| codigo nuevo:', cambios.codigo || '(variantes)');
     await guardarDiag({ resultado: 'GUARDADO OK', producto: prod.title, codigo_nuevo: cambios.codigo || 'variantes actualizadas' });
 
