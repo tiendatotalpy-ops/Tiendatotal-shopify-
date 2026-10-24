@@ -63,8 +63,10 @@ exports.handler = async function (event) {
     userData.country = [sha('py')];
     if (fbc) userData.fbc = fbc;
     if (fbp) userData.fbp = fbp;
-    if (clientIp) userData.client_ip_address = clientIp;
-    if (userAgent) userData.client_user_agent = userAgent;
+    // Pedidos cargados por sistema (WhatsApp vía API) traen IP y navegador de un servidor, no del cliente: se descartan
+    const esNavegador = /mozilla/i.test(userAgent || '');
+    if (esNavegador && clientIp) userData.client_ip_address = clientIp;
+    if (esNavegador) userData.client_user_agent = userAgent;
 
     const payload = {
       data: [
@@ -77,8 +79,8 @@ exports.handler = async function (event) {
           // idealmente pasar a 'website'.
           event_id: 'confirmado-' + String(numero || ''),
           // Con navegador conocido (user agent del pedido) Meta lo atribuye como venta web.
-          action_source: userAgent ? 'website' : 'other',
-          ...(userAgent ? { event_source_url: 'https://www.tiendatotal.com.py/' } : {}),
+          action_source: esNavegador ? 'website' : 'other',
+          ...(esNavegador ? { event_source_url: 'https://www.tiendatotal.com.py/' } : {}),
           user_data: userData,
           custom_data: {
             currency: 'PYG',
