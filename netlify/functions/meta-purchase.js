@@ -21,6 +21,9 @@ const CORS = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS'
 };
 
+const sha = v => crypto.createHash('sha256').update(v).digest('hex');
+const limpiar = v => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+
 exports.handler = async function (event) {
   if (event.httpMethod === 'OPTIONS') {
     return { statusCode: 204, headers: CORS, body: '' };
@@ -33,7 +36,7 @@ exports.handler = async function (event) {
     // fbc y fbp son opcionales por ahora: se agregan cuando el webhook de Shopify
     // empiece a guardarlos en el pedido. Si no vienen, el evento igual se manda
     // (con menor calidad de match) en vez de fallar.
-    const { telefono, monto, numero, fbc, fbp, clientIp, userAgent } = JSON.parse(event.body || '{}');
+    const { telefono, monto, numero, fbc, fbp, clientIp, userAgent, cliente, ciudad } = JSON.parse(event.body || '{}');
 
     const PIXEL_ID = process.env.META_PIXEL_ID || '937405848561054';
     const TOKEN = process.env.META_CAPI_TOKEN || process.env.META_TOKEN;
@@ -43,10 +46,21 @@ exports.handler = async function (event) {
     }
 
     const telefonoNormalizado = normalizarTelefonoPY(telefono);
+    if (!telefonoNormalizado && !fbc && !fbp) {
+      return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: 'Pedido sin teléfono ni datos de Meta' }) };
+    }
     const userData = {};
     if (telefonoNormalizado) {
       userData.ph = [crypto.createHash('sha256').update(telefonoNormalizado).digest('hex')];
     }
+    if (telefonoNormalizado) userData.external_id = [sha(telefonoNormalizado)];
+    // Nombre, ciudad y país suben la calidad de coincidencia en Meta
+    const partes = limpiar(cliente).split(/\s+/).filter(Boolean);
+    if (partes[0]) userData.fn = [sha(partes[0])];
+    if (partes.length > 1) userData.ln = [sha(partes[partes.length - 1])];
+    const ct = limpiar(ciudad).replace(/[^a-z]/g, '');
+    if (ct) userData.ct = [sha(ct)];
+    userData.country = [sha('py')];
     if (fbc) userData.fbc = fbc;
     if (fbp) userData.fbp = fbp;
     if (clientIp) userData.client_ip_address = clientIp;
