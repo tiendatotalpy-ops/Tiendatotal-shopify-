@@ -211,11 +211,17 @@ exports.handler = async (event) => {
     // los tenga disponibles al momento de confirmar la venta.
     const fbclid = extraerFbclid(order.note_attributes);
     const orderTimestampMs = order.created_at ? new Date(order.created_at).getTime() : Date.now();
-    const fbc = construirFbc(fbclid, orderTimestampMs);
-    const fbpAttr = (order.note_attributes || []).find(a => (a.name || '').toLowerCase() === 'fbp' || (a.name || '').toLowerCase() === '_fbp');
-    const fbp = fbpAttr ? fbpAttr.value : '';
-    const clientIp = order.client_details?.browser_ip || '';
-    const clientUserAgent = order.client_details?.user_agent || '';
+    const fbcDesdeLink = construirFbc(fbclid, orderTimestampMs);
+    const attrDe = (...nombres) => {
+      const a = (order.note_attributes || []).find(x => nombres.includes((x.name || '').toLowerCase()));
+      return a && a.value ? String(a.value) : '';
+    };
+    const fbp = attrDe('_fbp', 'fbp');
+    // _fbc lo guarda el tema desde la cookie de Meta (más confiable que reconstruirlo del link)
+    const fbc = attrDe('_fbc', 'fbc') || fbcDesdeLink;
+    // EasySell guarda la IP en el atributo "IP Address"; client_details casi siempre viene vacío
+    const clientIp = order.client_details?.browser_ip || attrDe('ip address', '_ip');
+    const clientUserAgent = order.client_details?.user_agent || attrDe('_ua');
 
     const id = uid();
     const pedido = {
