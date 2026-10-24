@@ -15,9 +15,18 @@ function normalizarTelefonoPY(telefono) {
   return n;
 }
 
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS'
+};
+
 exports.handler = async function (event) {
+  if (event.httpMethod === 'OPTIONS') {
+    return { statusCode: 204, headers: CORS, body: '' };
+  }
   if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, body: 'Method not allowed' };
+    return { statusCode: 405, headers: CORS, body: 'Method not allowed' };
   }
 
   try {
@@ -26,11 +35,11 @@ exports.handler = async function (event) {
     // (con menor calidad de match) en vez de fallar.
     const { telefono, monto, numero, fbc, fbp, clientIp, userAgent } = JSON.parse(event.body || '{}');
 
-    const PIXEL_ID = process.env.META_PIXEL_ID;
-    const TOKEN = process.env.META_CAPI_TOKEN;
+    const PIXEL_ID = process.env.META_PIXEL_ID || '937405848561054';
+    const TOKEN = process.env.META_CAPI_TOKEN || process.env.META_TOKEN;
 
     if (!PIXEL_ID || !TOKEN) {
-      return { statusCode: 500, body: JSON.stringify({ error: 'Falta configurar META_PIXEL_ID o META_CAPI_TOKEN en Netlify' }) };
+      return { statusCode: 500, headers: CORS, body: JSON.stringify({ error: 'Falta configurar META_PIXEL_ID o META_CAPI_TOKEN en Netlify' }) };
     }
 
     const telefonoNormalizado = normalizarTelefonoPY(telefono);
@@ -52,7 +61,10 @@ exports.handler = async function (event) {
           // manualmente sin sesión de navegador activa en este momento, no un
           // evento automático del sistema. Cuando fbc/fbp estén disponibles,
           // idealmente pasar a 'website'.
-          action_source: 'other',
+          event_id: 'confirmado-' + String(numero || ''),
+          // Con navegador conocido (user agent del pedido) Meta lo atribuye como venta web.
+          action_source: userAgent ? 'website' : 'other',
+          ...(userAgent ? { event_source_url: 'https://www.tiendatotal.com.py/' } : {}),
           user_data: userData,
           custom_data: {
             currency: 'PYG',
@@ -76,9 +88,10 @@ exports.handler = async function (event) {
 
     return {
       statusCode: resp.ok ? 200 : 500,
+      headers: CORS,
       body: JSON.stringify(data)
     };
   } catch (e) {
-    return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
+    return { statusCode: 500, headers: CORS, body: JSON.stringify({ error: e.message }) };
   }
 };
