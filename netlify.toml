@@ -2,6 +2,6 @@
   functions = "netlify/functions"
   publish = "."
 
-# Gasto publicitario de Meta -> Firebase cada 30 minutos
+# Gasto publicitario de Meta -> Firebase cada 20 minutos
 [functions."meta-spend"]
-  schedule = "*/30 * * * *"
+  schedule = "*/20 * * * *"
