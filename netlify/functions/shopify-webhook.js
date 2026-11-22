@@ -48,7 +48,7 @@ function esDomingo(d) { return new Date(d + 'T00:00:00').getDay() === 0; }
 function calcFechaEntrega(fecha) {
   const horaPY = new Date().toLocaleString('en-US', { timeZone: 'America/Asuncion', hour: '2-digit', hour12: false });
   const hora = parseInt(horaPY, 10);
-  let fe = hora < 19 ? fecha : addDays(fecha, 1); // mismo día mientras el delivery trabaja (hasta las 19hs)
+  let fe = hora < 14 ? fecha : addDays(fecha, 1); // corte 14hs: desde las 14hs se entrega al día siguiente
   if (esDomingo(fe)) fe = addDays(fe, 1); // el delivery no trabaja domingo, pasa directo al lunes
   return fe;
 }
