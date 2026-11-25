@@ -5,3 +5,7 @@
 # Gasto publicitario de Meta -> Firebase cada 20 minutos
 [functions."meta-spend"]
   schedule = "*/20 * * * *"
+
+# Costo de los productos Shopify -> app (Firebase) cada 10 minutos
+[functions."sync-costos"]
+  schedule = "*/10 * * * *"
