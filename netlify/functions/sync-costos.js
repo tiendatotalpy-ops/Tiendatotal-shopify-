@@ -97,9 +97,11 @@ exports.handler = async () => {
       cambiados++;
     }
     console.log('sync-costos OK, productos actualizados:', cambiados);
+    await firebase('PUT', '/debugSyncCostos.json', { hora: new Date().toISOString(), ok: true, actualizados: cambiados }).catch(() => {});
     return { statusCode: 200, body: 'OK ' + cambiados };
   } catch (err) {
     console.error('sync-costos ERROR', err);
+    await firebase('PUT', '/debugSyncCostos.json', { hora: new Date().toISOString(), error: String(err.message || err).slice(0, 500) }).catch(() => {});
     return { statusCode: 500, body: 'Error: ' + err.message };
   }
 };
